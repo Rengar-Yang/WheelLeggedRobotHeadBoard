@@ -1,2 +1,2 @@
-# WheelLeggedRobotHeadBoard
- 云台驱动板
+# WheelLeggedRobotDriverBoard
+ 轮腿机器人电机驱动板代码
