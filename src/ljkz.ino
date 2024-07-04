@@ -6,6 +6,25 @@
 
 unsigned long now_us = 0;
 unsigned long now_us1 = 0;
+////////////////////////云台角度控制///////////////////
+struct{
+    float Target;        //定义目标数值
+    float Now;        //定义当前数值
+    float Pre;        //定义上一个数值
+    float Sensitivity;        //定义灵敏度
+    float ActualOut;        //定义实际输出
+    float Error;              //定义偏差值
+    float Error_last;         //定义上一个偏差值
+    float Error_last1;         //定义上一个偏差值
+    float Kp,Ki,Kd;         //定义比例、积分、微分系数
+    float PIDout;           //定义控制执行器的变量
+    float Integral;         //定义积分值
+    float Derivative;       //定义微分
+    float Speed;     //角速度 
+}Pitch,Yaw;
+
+/////////////////////////////////////////////////////////
+
 ////////////////////////蓝牙主机连接从机///////////////////
 BluetoothSerial SerialBT;
 const char* deviceName = "HC-05";  // 要连接的设备名称
@@ -13,7 +32,7 @@ const char* deviceName = "HC-05";  // 要连接的设备名称
 // unsigned char buffer[50];
 // extern unsigned char vp_rxbuff[VALUEPACK_BUFFER_SIZE];
 // extern long rxIndex;
-//////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////
 
 ////////////////////////////双板通信/////////////////////////////////
 unsigned char recstatu = 0;//表示是否处于一个正在接收数据包的状态
@@ -37,14 +56,13 @@ unsigned char rxbufBluetooth[9] = {0,0,0,0,0,0,0,0,0};//接收数据的缓冲区
 unsigned char txbufBluetooth[9] = {0,0,0,0,0,0,0,0,0};
 unsigned char datBluetooth = 0;
 int CommunicationTime = 0;
-int CommunicationGap = 300;
+int CommunicationGap = 50;
 unsigned char X_Speed,Y_Speed;
 ////////////////////////////////////////////////////////////////////
 
 float Amotor_speed = 0;   //A电机当前速度
 float Bmotor_speed = 0;
-float Amotor_angle_prev = 0;  //电机上一次的角度
-float Bmotor_angle_prev = 0;
+
 int js = 0;
 
 float setAsd = 0;//设置A电机速度
@@ -160,20 +178,8 @@ motor2.foc_modulation = FOCModulationType::SpaceVectorPWM;
   _delay(1000);
 
    ////////////////////////蓝牙主机连接从机///////////////////////////////////
-  SerialBT.begin("Motor_Driver",true); //Bluetooth device name
+  SerialBT.begin("Head_Driver"); //Bluetooth device name
   Serial.println("The device started, now you can pair it with bluetooth!");
-  // 尝试连接到指定设备
-  bool connected = false;
-  while (!connected&&TryTime>0) {
-    if (SerialBT.connect(deviceName)) {
-      Serial.println("Connected to " + String(deviceName));
-      connected = true;
-    } else {
-      Serial.println("Failed to connect. Trying again...");
-      TryTime-=1;
-      delay(1000);  // 重试前的延迟
-    }
-  }
 
 ////////////////////////WiFi连接////////////////////////////////////////////
 //Wifi接收摄像头数据
@@ -185,6 +191,19 @@ motor2.foc_modulation = FOCModulationType::SpaceVectorPWM;
   // timerAlarmEnable(timer1);
   ////////////////////////////////////////////////////////////////////////
 
+///////////////////////////角度控制代码//////////////////////////////////
+Pitch.Sensitivity = 0.01;
+Pitch.Target = 0;
+Pitch.Kp = 50;
+Pitch.Ki = 0;
+Pitch.Kd = 0;
+
+Yaw.Sensitivity = 0.01;
+Yaw.Target = 0;
+Yaw.Kp = 50;
+Yaw.Ki = 0;
+Yaw.Kd = 0;
+////////////////////////////////////////////////////////////////////////
 }
 
 void loop() {  
@@ -217,18 +236,40 @@ void loop() {
   {
     js++;
     //Serial.println((now_us-now_us1));
-    float Amotor_angle = sensor1.getAngle();
-    float Bmotor_angle = sensor2.getAngle();
-    Amotor_speed = (Amotor_angle - Amotor_angle_prev)/0.01;
-    Bmotor_speed = (Bmotor_angle - Bmotor_angle_prev)/0.01;
-    Amotor_angle_prev = Amotor_angle; 
-    Bmotor_angle_prev = Bmotor_angle;    
+    Pitch.Now = sensor1.getAngle();
+    Yaw.Now = sensor2.getAngle();
+
+    Pitch.Speed = (Pitch.Now - Pitch.Pre)/0.01;
+    Pitch.Error = Pitch.Now - Pitch.Target;
+    Pitch.Integral += Pitch.Ki * Pitch.Error;
+    Pitch.Derivative = Pitch.Kd * Pitch.Speed;
+    Pitch.PIDout = Pitch.Kp * Pitch.Error + Pitch.Integral + Pitch.Derivative;
+
+    Yaw.Speed = (Yaw.Now - Yaw.Pre)/0.01;
+    Yaw.Error = Yaw.Now - Yaw.Target;
+    Yaw.Integral += Yaw.Ki * Yaw.Error;
+    Yaw.Derivative = Yaw.Kd * Yaw.Speed;
+    Yaw.PIDout = Yaw.Kp * Yaw.Error + Yaw.Integral + Yaw.Derivative;
+
+    Pitch.Pre = Pitch.Now; 
+    Yaw.Pre = Yaw.Now;    
     
+    setAsd = Pitch.PIDout;
+    setBsd = Yaw.PIDout;
     Read_motor_speed((int)(Amotor_speed*100),(int)(Bmotor_speed*100));
     now_us1 = now_us;
     // Serial.println(Amotor_speed,3);
-    Serial.print(Amotor_angle);
-    Serial.println(Bmotor_angle);
+
+    // 打印编码器角度
+    // Serial.print(Pitch.Now);
+    // Serial.print(" ");
+    // Serial.println(Yaw.Now);
+
+    //打印PID控制效果
+    Serial.print(Pitch.Now);
+    Serial.print(",");
+    Serial.print(Pitch.Target);
+    Serial.print("\n");
   } 
   
 }
@@ -254,7 +295,7 @@ void Read_data_from_Slave() //串口读数据
   if (SerialBT.available() > 0) 
   {
      datBluetooth = SerialBT.read();  
-     Serial.print(datBluetooth);  
+     //Serial.print(datBluetooth);  
      if((ccntBluetooth==0)&&(datBluetooth == 111))
      {
        rxbufBluetooth[ccntBluetooth] = datBluetooth;
@@ -278,22 +319,29 @@ void Read_data_from_Slave() //串口读数据
                 packerflagBluetooth = 1;//用于告知系统已经接收成功
                 ccntBluetooth = 0;  
                 
-                // Serial.println("Data from slave:");   
-                // Serial.print(rxbufBluetooth[0]); 
-                // Serial.print(" ");
-                // Serial.print(rxbufBluetooth[1]); 
-                // Serial.print(" ");
-                // Serial.print(rxbufBluetooth[2]); 
-                // Serial.print(" ");
-                // Serial.print(rxbufBluetooth[3]); 
-                // Serial.print(" ");
-                // Serial.print(rxbufBluetooth[4]); 
-                // Serial.print(" ");
-                // Serial.print(rxbufBluetooth[5]); 
-                // Serial.print(" ");
-                // Serial.print(rxbufBluetooth[6]); 
-                // Serial.print(" ");
-                // Serial.println(rxbufBluetooth[7]);     
+                //Serial.println("Data from slave:");   
+                Serial.print(rxbufBluetooth[0]); 
+                Serial.print(" ");
+                Serial.print(rxbufBluetooth[1]); 
+                Serial.print(" ");
+                Serial.print(rxbufBluetooth[2]); 
+                Serial.print(" ");
+                Serial.print(rxbufBluetooth[3]); 
+                Serial.print(" ");
+                Serial.print(rxbufBluetooth[4]); 
+                Serial.print(" ");
+                Serial.print(rxbufBluetooth[5]); 
+                Serial.print(" ");
+                Serial.print(rxbufBluetooth[6]); 
+                Serial.print(" ");
+                Serial.println(rxbufBluetooth[7]);  
+                
+                Pitch.Target = Pitch.Sensitivity * (rxbufBluetooth[3]-127);
+                if(Pitch.Target > 1) Pitch.Target = 1;
+                if(Pitch.Target < -1) Pitch.Target = -1;
+                Yaw.Target = Yaw.Sensitivity * (rxbufBluetooth[2]-127);
+                if(Yaw.Target > 1) Yaw.Target = 1;
+                if(Yaw.Target < -1) Yaw.Target = -1;
      
             }
             else
@@ -413,23 +461,23 @@ void Read_serial1() //串口读数据
                 x2<<=8;
                 x2+=rxbuf[5];
       
-                X_Speed = rxbuf[6];
-                X_Speed = rxbuf[7];
-                setAsd = (x1-32767)*0.01;
-                setBsd = (x2-32767)*0.01;
+                // X_Speed = rxbuf[6];
+                // X_Speed = rxbuf[7];
+                // setAsd = (x1-32767)*0.01;
+                // setBsd = (x2-32767)*0.01;
 
                 // Serial.println("Data from controller:");
-                Serial.print(sensor1.getAngle());
-                Serial.print(" ");
-                Serial.print(sensor2.getAngle());
-                Serial.print(" ");
-                Serial.print(setAsd);
-                Serial.print(" ");
-                Serial.print(setBsd); 
-                Serial.print(" ");
-                Serial.print(rxbuf[6]); 
-                Serial.print(" ");
-                Serial.println(rxbuf[7]); 
+                // Serial.print(sensor1.getAngle());
+                // Serial.print(" ");
+                // Serial.print(sensor2.getAngle());
+                // Serial.print(" ");
+                // Serial.print(setAsd);
+                // Serial.print(" ");
+                // Serial.print(setBsd); 
+                // Serial.print(" ");
+                // Serial.print(rxbuf[6]); 
+                // Serial.print(" ");
+                // Serial.println(rxbuf[7]); 
                 js = 0;     
      
             }

@@ -8,8 +8,8 @@
         {
             "name": "PlatformIO",
             "includePath": [
-                "C:/Users/Rengar/Documents/PlatformIO/Projects/240611-225733-lolin_d32/WheelLeggedRobotDriverBoard/include",
-                "C:/Users/Rengar/Documents/PlatformIO/Projects/240611-225733-lolin_d32/WheelLeggedRobotDriverBoard/src",
+                "C:/Users/Rengar/Documents/PlatformIO/Projects/WheelLeggedRobotHeadBoard/WheelLeggedRobotHeadBoard/include",
+                "C:/Users/Rengar/Documents/PlatformIO/Projects/WheelLeggedRobotHeadBoard/WheelLeggedRobotHeadBoard/src",
                 "C:/Users/Rengar/Documents/Arduino/libraries/Simple_FOC/src",
                 "C:/Users/Rengar/.platformio/packages/framework-arduinoespressif32/libraries/SPI/src",
                 "C:/Users/Rengar/.platformio/packages/framework-arduinoespressif32/libraries/Wire/src",
@@ -115,8 +115,8 @@
             "browse": {
                 "limitSymbolsToIncludedHeaders": true,
                 "path": [
-                    "C:/Users/Rengar/Documents/PlatformIO/Projects/240611-225733-lolin_d32/WheelLeggedRobotDriverBoard/include",
-                    "C:/Users/Rengar/Documents/PlatformIO/Projects/240611-225733-lolin_d32/WheelLeggedRobotDriverBoard/src",
+                    "C:/Users/Rengar/Documents/PlatformIO/Projects/WheelLeggedRobotHeadBoard/WheelLeggedRobotHeadBoard/include",
+                    "C:/Users/Rengar/Documents/PlatformIO/Projects/WheelLeggedRobotHeadBoard/WheelLeggedRobotHeadBoard/src",
                     "C:/Users/Rengar/Documents/Arduino/libraries/Simple_FOC/src",
                     "C:/Users/Rengar/.platformio/packages/framework-arduinoespressif32/libraries/SPI/src",
                     "C:/Users/Rengar/.platformio/packages/framework-arduinoespressif32/libraries/Wire/src",
