@@ -1,5 +1,6 @@
 #include <SimpleFOC.h>
 #include "BluetoothSerial.h"
+#include "valuepack.h"
 
 #define RXD1 18
 #define TXD1 23
@@ -9,6 +10,7 @@ unsigned long now_us1 = 0;
 ////////////////////////云台角度控制///////////////////
 struct{
     float Target;        //定义目标数值
+    float TargetBias;        //定义目标数值偏差
     float Now;        //定义当前数值
     float Pre;        //定义上一个数值
     float Sensitivity;        //定义灵敏度
@@ -22,7 +24,14 @@ struct{
     float Derivative;       //定义微分
     float Speed;     //角速度 
 }Pitch,Yaw;
+/////////////////////////////////////////////////////////
 
+/////////////////////云台角度环蓝牙调试PID/////////////////
+RxPack rxpack;
+unsigned char buffer[50];
+extern unsigned char vp_rxbuff[VALUEPACK_BUFFER_SIZE];
+extern long rxIndex;
+unsigned short vp_circle_rx_index;//环形缓冲区index
 /////////////////////////////////////////////////////////
 
 ////////////////////////蓝牙主机连接从机///////////////////
@@ -185,24 +194,28 @@ motor2.foc_modulation = FOCModulationType::SpaceVectorPWM;
 //Wifi接收摄像头数据
 
 ///////////////////////////////////////////////////////////////////////////
+
+//////////////////////////////////定时器读取蓝牙信息////////////////////////
   // hw_timer_t *timer1 = timerBegin(1, 80, true);    //启动定时器
   // timerAttachInterrupt(timer1, &TIME_INTERRUPT_2, true);
   // timerAlarmWrite(timer1, 1000, true);
   // timerAlarmEnable(timer1);
-  ////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////
 
 ///////////////////////////角度控制代码//////////////////////////////////
 Pitch.Sensitivity = 0.01;
 Pitch.Target = 0;
+Pitch.TargetBias = 0.22;
 Pitch.Kp = 50;
 Pitch.Ki = 0;
-Pitch.Kd = 0;
+Pitch.Kd = 1;
 
 Yaw.Sensitivity = 0.01;
 Yaw.Target = 0;
-Yaw.Kp = 50;
+Yaw.TargetBias = 1.19;
+Yaw.Kp = 70;
 Yaw.Ki = 0;
-Yaw.Kd = 0;
+Yaw.Kd = 10;
 ////////////////////////////////////////////////////////////////////////
 }
 
@@ -222,10 +235,12 @@ void loop() {
   {
     CommunicationTime = millis();
     Send_data_to_Slave(); //向主机发数据
-    //Serial.println(kalmanfilter.angle);
   }
   
-  Read_data_from_Slave(); //串口读数据
+  Read_data_from_Slave(); //蓝牙从下板读命令数据
+
+  // PIDTuning();//蓝牙调试PID参数
+  // readValuePack(&rxpack);//接收遥控器数据包
 
   if(js>3)
   {
@@ -240,13 +255,13 @@ void loop() {
     Yaw.Now = sensor2.getAngle();
 
     Pitch.Speed = (Pitch.Now - Pitch.Pre)/0.01;
-    Pitch.Error = Pitch.Now - Pitch.Target;
+    Pitch.Error = Pitch.Now - (Pitch.Target+Pitch.TargetBias);
     Pitch.Integral += Pitch.Ki * Pitch.Error;
     Pitch.Derivative = Pitch.Kd * Pitch.Speed;
     Pitch.PIDout = Pitch.Kp * Pitch.Error + Pitch.Integral + Pitch.Derivative;
 
     Yaw.Speed = (Yaw.Now - Yaw.Pre)/0.01;
-    Yaw.Error = Yaw.Now - Yaw.Target;
+    Yaw.Error = Yaw.Now - (Yaw.Target+Yaw.TargetBias);
     Yaw.Integral += Yaw.Ki * Yaw.Error;
     Yaw.Derivative = Yaw.Kd * Yaw.Speed;
     Yaw.PIDout = Yaw.Kp * Yaw.Error + Yaw.Integral + Yaw.Derivative;
@@ -261,15 +276,15 @@ void loop() {
     // Serial.println(Amotor_speed,3);
 
     // 打印编码器角度
-    // Serial.print(Pitch.Now);
-    // Serial.print(" ");
-    // Serial.println(Yaw.Now);
+    Serial.print(Pitch.Now);
+    Serial.print(" ");
+    Serial.println(Yaw.Now);
 
     //打印PID控制效果
-    Serial.print(Pitch.Now);
-    Serial.print(",");
-    Serial.print(Pitch.Target);
-    Serial.print("\n");
+    // Serial.print(Pitch.Now);
+    // Serial.print(",");
+    // Serial.print(Pitch.Target);
+    // Serial.print("\n");
   } 
   
 }
@@ -288,6 +303,38 @@ void Send_data_to_Slave()
   txbufBluetooth[TxIndexBluetooth-1]=crc2(txbufBluetooth);
   SerialBT.write(txbufBluetooth,sizeof(txbufBluetooth));
   
+}
+
+void PIDTuning()//用蓝牙进行PID调试
+{
+  if (SerialBT.available()) 
+  {
+    vp_rxbuff[vp_circle_rx_index]=SerialBT.read();
+	  vp_circle_rx_index++;
+  	if(vp_circle_rx_index>=VALUEPACK_BUFFER_SIZE)
+    	vp_circle_rx_index=0;
+      rxIndex++;
+  }
+  Pitch.Kp = rxpack.floats[0];
+  Pitch.Ki = rxpack.floats[1];
+  Pitch.Kd = rxpack.floats[2];
+
+  Yaw.Kp = rxpack.floats[3];
+  Yaw.Ki = rxpack.floats[4];
+  Yaw.Kd = rxpack.floats[5];
+
+//打印蓝牙PID调试参数
+  Serial.print(Pitch.Kp);
+  Serial.print(" ");
+  Serial.print(Pitch.Ki);
+  Serial.print(" ");
+  Serial.print(Pitch.Kd);
+  Serial.print(" ");
+  Serial.print(Yaw.Kp);
+  Serial.print(" ");
+  Serial.print(Yaw.Ki);
+  Serial.print(" ");
+  Serial.println(Yaw.Kd);
 }
 
 void Read_data_from_Slave() //串口读数据
@@ -320,25 +367,25 @@ void Read_data_from_Slave() //串口读数据
                 ccntBluetooth = 0;  
                 
                 //Serial.println("Data from slave:");   
-                Serial.print(rxbufBluetooth[0]); 
-                Serial.print(" ");
-                Serial.print(rxbufBluetooth[1]); 
-                Serial.print(" ");
-                Serial.print(rxbufBluetooth[2]); 
-                Serial.print(" ");
-                Serial.print(rxbufBluetooth[3]); 
-                Serial.print(" ");
-                Serial.print(rxbufBluetooth[4]); 
-                Serial.print(" ");
-                Serial.print(rxbufBluetooth[5]); 
-                Serial.print(" ");
-                Serial.print(rxbufBluetooth[6]); 
-                Serial.print(" ");
-                Serial.println(rxbufBluetooth[7]);  
+                // Serial.print(rxbufBluetooth[0]); 
+                // Serial.print(" ");
+                // Serial.print(rxbufBluetooth[1]); 
+                // Serial.print(" ");
+                // Serial.print(rxbufBluetooth[2]); 
+                // Serial.print(" ");
+                // Serial.print(rxbufBluetooth[3]); 
+                // Serial.print(" ");
+                // Serial.print(rxbufBluetooth[4]); 
+                // Serial.print(" ");
+                // Serial.print(rxbufBluetooth[5]); 
+                // Serial.print(" ");
+                // Serial.print(rxbufBluetooth[6]); 
+                // Serial.print(" ");
+                // Serial.println(rxbufBluetooth[7]);  
                 
                 Pitch.Target = Pitch.Sensitivity * (rxbufBluetooth[3]-127);
-                if(Pitch.Target > 1) Pitch.Target = 1;
-                if(Pitch.Target < -1) Pitch.Target = -1;
+                if(Pitch.Target > 0.4) Pitch.Target = 0.4;
+                if(Pitch.Target < -0.06) Pitch.Target = -0.06;
                 Yaw.Target = Yaw.Sensitivity * (rxbufBluetooth[2]-127);
                 if(Yaw.Target > 1) Yaw.Target = 1;
                 if(Yaw.Target < -1) Yaw.Target = -1;
