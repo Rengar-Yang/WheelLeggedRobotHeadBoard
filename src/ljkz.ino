@@ -54,8 +54,9 @@ unsigned char packerflag = 0;//是否接收到一个完整的数据包标志
 int8_t rxbuf[6] = {0,0,0,0,0,0};//接收数据的缓冲区
 unsigned char txbuf[6] = {0,0,0,0,0,0,};
 unsigned char dat = 0;
-unsigned char RobotMode = 1;// 0普通模式 1自瞄模式 2PID调试模式
-int8_t X_Bias, Y_Bias;
+unsigned char RobotMode = 0;// 0普通模式 1自瞄调试模式 2PID调试模式
+unsigned char AutoAimSwitch = 0;// 0关闭自瞄 1开启自瞄 （只在普通模式起作用）
+int8_t X_Bias, Y_Bias, Detected=0;
 ////////////////////////////////////////////////////////////////////
 
 ////////////////////////////双机通信/////////////////////////////////
@@ -200,28 +201,31 @@ motor2.foc_modulation = FOCModulationType::SpaceVectorPWM;
 ///////////////////////////////////////////////////////////////////////////
 
 //////////////////////////////////定时器读取蓝牙信息////////////////////////
+if (RobotMode !=0)
+{
   hw_timer_t *timer1 = timerBegin(1, 80, true);    //启动定时器
   timerAttachInterrupt(timer1, &TIME_INTERRUPT_2, true);
   timerAlarmWrite(timer1, 1000, true);
   timerAlarmEnable(timer1);
+}
 //////////////////////////////////////////////////////////////////////////
 
 ///////////////////////////角度控制代码//////////////////////////////////
-Pitch.Sensitivity = 0.01;
-Pitch.Target = 0;
-Pitch.TargetBias = 0;
-Pitch.Kp = 120;
-Pitch.Ki = 0.04;
-Pitch.Kd = 0.5;
-Pitch.AutoAimGain = 0.5;
-  
-Yaw.Sensitivity = 0.01;
-Yaw.Target = 0;
-Yaw.TargetBias = 0;
-Yaw.Kp = 120;
-Yaw.Ki = 0.04;
-Yaw.Kd = 0.5;
-Yaw.AutoAimGain = 0.7;
+  Pitch.Sensitivity = 0.01;
+  Pitch.Target = 0;
+  Pitch.TargetBias = sensor1.getAngle()-0.22;
+  Pitch.Kp = 120;
+  Pitch.Ki = 0.04;
+  Pitch.Kd = 0.5;
+  Pitch.AutoAimGain = 50;
+    
+  Yaw.Sensitivity = 0.01;
+  Yaw.Target = 0;
+  Yaw.TargetBias = sensor2.getAngle();
+  Yaw.Kp = 120;
+  Yaw.Ki = 0.04;
+  Yaw.Kd = 0.5;
+  Yaw.AutoAimGain = 50;
 ////////////////////////////////////////////////////////////////////////
 }
 
@@ -236,20 +240,29 @@ void loop() {
   motor.move(setAsd);
   motor2.move(setBsd);
   
-  Read_serial1(); //从摄像头读数据
   if (millis() - CommunicationTime > CommunicationGap)
   {
     CommunicationTime = millis();
-    if (RobotMode == 0)
-      Send_data_to_Slave(); //向主机发数据
-
-    if (RobotMode == 2 || RobotMode == 1)
-    {
-      readValuePack(&rxpack);//接收遥控器数据包
-      PIDTuning();//蓝牙调试PID参数 
-    }
+    // if (RobotMode == 0)
+    //   Send_data_to_Slave(); //向主机发数据
+    startValuePack(TXbuffer);
+    putByte(X_Bias);
+    putByte(Y_Bias);
+    putFloat(Pitch.Target+Pitch.TargetBias);
+    putFloat(Yaw.Target+Yaw.TargetBias);
+    putFloat(setAsd);
+    putFloat(setBsd);
+    endValuePack();
+    BTsendBuffer(TXbuffer,endValuePack());
+    // if (RobotMode == 2 || RobotMode == 1)
+    // {
+    //   readValuePack(&rxpack);//接收遥控器数据包
+    //   PIDTuning();//蓝牙调试PID参数 
+    // }
   }
   
+  if (AutoAimSwitch == 1 || RobotMode == 1)
+    Read_serial1(); //从摄像头读数据
   if (RobotMode == 0)
     Read_data_from_Slave(); //蓝牙从下板读命令数据
 
@@ -258,71 +271,83 @@ void loop() {
     setAsd = 0;
     setBsd = 0;
   } 
+
   if((now_us-now_us1)>=10)
   {
-    js++;
+      js++;
+        
+      // if (RobotMode == 0 && rxbufBluetooth[2]!=0 && rxbufBluetooth[3]!=0)
+      // {
+      //     Pitch.Target = Pitch.Sensitivity * (rxbufBluetooth[3]-127);
+      //     Yaw.Target = Yaw.Sensitivity * (rxbufBluetooth[2]-127);
+      // }
 
-    if (RobotMode == 0)
-    {
-      Pitch.Target = Pitch.Sensitivity * (rxbufBluetooth[3]-127);
-      Yaw.Target = Yaw.Sensitivity * (rxbufBluetooth[2]-127);
-    }
+      if (RobotMode == 1)
+      {
+          readValuePack(&rxpack);//接收遥控器数据包
+          PIDTuning();//蓝牙调试PID参数 
+          if (Detected == 1)
+          {
+            if (X_Bias>3||X_Bias<-3)
+              Yaw.Target += X_Bias*0.001*Yaw.AutoAimGain;
+            if (Y_Bias>3||Y_Bias<-3)
+              Pitch.Target += Y_Bias*0.001*Pitch.AutoAimGain;
+          }
+      }
 
-    if (RobotMode == 1)
-    {
-      if (X_Bias>3||X_Bias<-3)
-        Yaw.Target -= X_Bias*0.001*Yaw.AutoAimGain;
-      if (Y_Bias>3||Y_Bias<-3)
-        Pitch.Target += Y_Bias*0.001*Pitch.AutoAimGain;
-    }
+      if (RobotMode == 2)
+      {
+          readValuePack(&rxpack);//接收遥控器数据包
+          PIDTuning();//蓝牙调试PID参数 
+          Pitch.Target = rxpack.floats[6];
+          Yaw.Target = rxpack.floats[7];
+      }
 
-    if (RobotMode == 2)
-    {
-      Pitch.Target = rxpack.floats[6];
-      Yaw.Target = rxpack.floats[7];
-    }
+      if(Pitch.Target > 0.2) Pitch.Target = 0.2;
+      if(Pitch.Target < -0.15) Pitch.Target = -0.15;
 
-    // if(Pitch.Target > 0.4) Pitch.Target = 0.4;
-    // if(Pitch.Target < -0.06) Pitch.Target = -0.06;
+      if(Yaw.Target > 1) Yaw.Target = 1;
+      if(Yaw.Target < -1) Yaw.Target = -1;   
 
-    if(Yaw.Target > 1) Yaw.Target = 1;
-    if(Yaw.Target < -1) Yaw.Target = -1;   
+      //Serial.println((now_us-now_us1));
+      Pitch.Now = sensor1.getAngle();
+      Yaw.Now = sensor2.getAngle();
 
-    //Serial.println((now_us-now_us1));
-    Pitch.Now = sensor1.getAngle();
-    Yaw.Now = sensor2.getAngle();
+      Pitch.Speed = (Pitch.Now - Pitch.Pre)/0.01;
+      Pitch.Error = Pitch.Now - (Pitch.Target+Pitch.TargetBias);
+      Pitch.Integral += Pitch.Ki * Pitch.Error;
+      Pitch.Derivative = Pitch.Kd * Pitch.Speed;
+      Pitch.PIDout = Pitch.Kp * Pitch.Error + Pitch.Integral + Pitch.Derivative;
 
-    Pitch.Speed = (Pitch.Now - Pitch.Pre)/0.01;
-    Pitch.Error = Pitch.Now - (Pitch.Target+Pitch.TargetBias);
-    Pitch.Integral += Pitch.Ki * Pitch.Error;
-    Pitch.Derivative = Pitch.Kd * Pitch.Speed;
-    Pitch.PIDout = Pitch.Kp * Pitch.Error + Pitch.Integral + Pitch.Derivative;
+      Yaw.Speed = (Yaw.Now - Yaw.Pre)/0.01;
+      Yaw.Error = Yaw.Now - (Yaw.Target+Yaw.TargetBias);
+      Yaw.Integral += Yaw.Ki * Yaw.Error;
+      Yaw.Derivative = Yaw.Kd * Yaw.Speed;
+      Yaw.PIDout = Yaw.Kp * Yaw.Error + Yaw.Integral + Yaw.Derivative;
 
-    Yaw.Speed = (Yaw.Now - Yaw.Pre)/0.01;
-    Yaw.Error = Yaw.Now - (Yaw.Target+Yaw.TargetBias);
-    Yaw.Integral += Yaw.Ki * Yaw.Error;
-    Yaw.Derivative = Yaw.Kd * Yaw.Speed;
-    Yaw.PIDout = Yaw.Kp * Yaw.Error + Yaw.Integral + Yaw.Derivative;
-
-    Pitch.Pre = Pitch.Now; 
-    Yaw.Pre = Yaw.Now;    
+      Pitch.Pre = Pitch.Now; 
+      Yaw.Pre = Yaw.Now;    
+      
+      setAsd = Pitch.PIDout;
+      setBsd = Yaw.PIDout;
+      //Read_motor_speed((int)(Amotor_speed*100),(int)(Bmotor_speed*100));
+      now_us1 = now_us;
     
-    setAsd = Pitch.PIDout;
-    setBsd = Yaw.PIDout;
-    //Read_motor_speed((int)(Amotor_speed*100),(int)(Bmotor_speed*100));
-    now_us1 = now_us;
-  
 
-    // 打印编码器角度
-    // Serial.print(Pitch.Now);
-    // Serial.print(" ");
-    // Serial.println(Yaw.Now);
+      // 打印编码器角度
+      Serial.print(Pitch.Now);
+      Serial.print(" ");
+      Serial.print(Yaw.Now);
+      Serial.print(" ");
+      Serial.print(Pitch.Target);
+      Serial.print(" ");
+      Serial.println(Yaw.Target);
 
-    //打印PID控制效果
-    // Serial.print(Pitch.Now);
-    // Serial.print(",");
-    // Serial.print(Pitch.Target);
-    // Serial.print("\n");
+      //打印PID控制效果
+      // Serial.print(Pitch.Now);
+      // Serial.print(",");
+      // Serial.print(Pitch.Target);
+      // Serial.print("\n");
   } 
   
 }
@@ -360,16 +385,8 @@ void BTsendBuffer(unsigned char *p,unsigned short length)//发送数据包
 
 void PIDTuning()//用蓝牙进行PID调试
 {
-  // if (SerialBT.available()) 
-  // {
-  //   vp_rxbuff[vp_circle_rx_index]=SerialBT.read();
-	//   vp_circle_rx_index++;
-  // 	if(vp_circle_rx_index>=VALUEPACK_BUFFER_SIZE)
-  //   	vp_circle_rx_index=0;
-  //     rxIndex++;
-  // }
 
-  if(RobotMode = 2)
+  if(RobotMode == 2)
   {
     Pitch.Kp = rxpack.floats[0];
     Pitch.Ki = rxpack.floats[1];
@@ -380,7 +397,7 @@ void PIDTuning()//用蓝牙进行PID调试
     Yaw.Kd = rxpack.floats[5];
   }
 
-  if(RobotMode = 1)
+  if(RobotMode == 1)
   {
     Pitch.AutoAimGain = rxpack.floats[0];
     Yaw.AutoAimGain = rxpack.floats[1];
@@ -389,9 +406,9 @@ void PIDTuning()//用蓝牙进行PID调试
   startValuePack(TXbuffer);
   putByte(X_Bias);
   putByte(Y_Bias);
-  putFloat(Pitch.Target);
+  putFloat(Pitch.Target+Pitch.TargetBias);
   putFloat(Pitch.Now);
-  putFloat(Yaw.Target);
+  putFloat(Yaw.Target+Yaw.TargetBias);
   putFloat(Yaw.Now);
   putFloat(setAsd);
   putFloat(setBsd);
@@ -440,37 +457,49 @@ void Read_data_from_Slave() //读主板发来的数据
                 packerflagBluetooth = 1;//用于告知系统已经接收成功
                 ccntBluetooth = 0;  
                 
-                Serial.println("Data from slave:");   
-                Serial.print(rxbufBluetooth[0]); 
-                Serial.print(" ");
-                Serial.print(rxbufBluetooth[1]); 
-                Serial.print(" ");
-                Serial.print(rxbufBluetooth[2]); 
-                Serial.print(" ");
-                Serial.print(rxbufBluetooth[3]); 
-                Serial.print(" ");
-                Serial.print(rxbufBluetooth[4]); 
-                Serial.print(" ");
-                Serial.print(rxbufBluetooth[5]); 
-                Serial.print(" ");
-                Serial.print(rxbufBluetooth[6]); 
-                Serial.print(" ");
-                Serial.println(rxbufBluetooth[7]);  
+                // Serial.println("Data from slave:");   
+                // Serial.print(rxbufBluetooth[0]); 
+                // Serial.print(" ");
+                // Serial.print(rxbufBluetooth[1]); 
+                // Serial.print(" ");
+                // Serial.print(rxbufBluetooth[2]); 
+                // Serial.print(" ");
+                // Serial.print(rxbufBluetooth[3]); 
+                // Serial.print(" ");
+                // Serial.print(rxbufBluetooth[4]); 
+                // Serial.print(" ");
+                // Serial.print(rxbufBluetooth[5]); 
+                // Serial.print(" ");
+                // Serial.print(rxbufBluetooth[6]); 
+                // Serial.print(" ");
+                // Serial.println(rxbufBluetooth[7]);  
                 
-                // if (RobotMode == 0)
-                // {
-                //   Pitch.Target = Pitch.Sensitivity * (rxbufBluetooth[3]-127);
-                //   Yaw.Target = Yaw.Sensitivity * (rxbufBluetooth[2]-127);
-                // }
+                AutoAimSwitch = rxbufBluetooth[4];
 
-                // if(Pitch.Target > 0.4) Pitch.Target = 0.4;
-                // if(Pitch.Target < -0.06) Pitch.Target = -0.06;
-
-                // if(Yaw.Target > 1) Yaw.Target = 1;
-                // if(Yaw.Target < -1) Yaw.Target = -1;
-
-                // RobotMode = rxbufBluetooth[4];
-     
+                if (RobotMode == 0 && rxbufBluetooth[2]!=0 && rxbufBluetooth[3]!=0)
+                {
+                  if(AutoAimSwitch == 0)
+                  {
+                    Pitch.Target = Pitch.Sensitivity * (rxbufBluetooth[3]-127);
+                    Yaw.Target = Yaw.Sensitivity * (rxbufBluetooth[2]-127);
+                  }
+                  if(AutoAimSwitch == 1)
+                  {
+                    if (Detected == 1)
+                    {
+                      if (X_Bias>1||X_Bias<-1)
+                        Yaw.Target += X_Bias*0.001*Yaw.AutoAimGain;
+                      if (Y_Bias>1||Y_Bias<-1)
+                        Pitch.Target += Y_Bias*0.001*Pitch.AutoAimGain;
+                    }
+                    // else
+                    // {
+                    //   Pitch.Target = Pitch.Sensitivity * (rxbufBluetooth[3]-127);
+                    //   Yaw.Target = Yaw.Sensitivity * (rxbufBluetooth[2]-127);
+                    // }
+                  }
+                }
+                //js = 0; 
             }
             else
             {
@@ -586,6 +615,7 @@ unsigned char crc2Camera(unsigned char buffer[])
 
 void Read_serial1() //读摄像头数据
 { 
+  Detected = 0; //清空识别到目标的标志位
   if (Serial1.available() > 0) 
   {
      dat = Serial1.read();  
@@ -611,41 +641,18 @@ void Read_serial1() //读摄像头数据
             {
                 recstatu = 0;
                 packerflag = 1;//用于告知系统已经接收成功
+                Detected = 1; //成功识别到目标
                 ccnt = 0;  
-                // int x1=rxbuf[2];
-                // x1<<=8;
-                // x1+=rxbuf[3];
-                // int x2=rxbuf[4];
-                // x2<<=8;
-                // x2+=rxbuf[5];
       
                 X_Bias = rxbuf[2];
                 Y_Bias = rxbuf[3];
-
-                // if (RobotMode == 1)
-                // {
-                //   if (X_Bias>3||X_Bias<-3)
-                //      Yaw.Target -= X_Bias*0.001*Yaw.AutoAimGain;
-                //   if (Y_Bias>3||Y_Bias<-3)
-                //      Pitch.Target += Y_Bias*0.001*Pitch.AutoAimGain;
-                // }
-
-                // if(Pitch.Target > 0.4) Pitch.Target = 0.4;
-                // if(Pitch.Target < -0.06) Pitch.Target = -0.06;
-
-                // if(Yaw.Target > 1) Yaw.Target = 1;
-                // if(Yaw.Target < -1) Yaw.Target = -1;
-
-                // setAsd = (x1-32767)*0.01;
-                // setBsd = (x2-32767)*0.01;
 
                 // Serial.println("Data from controller:");
                 // Serial.print(rxbuf[2]);
                 // Serial.print(" ");
                 // Serial.print(rxbuf[3]);
                 // Serial.print(" ");
-                // Serial.println(rxbuf[4]); 
-                js = 0;     
+                // Serial.println(rxbuf[4]);     
      
             }
             else
