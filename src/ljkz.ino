@@ -217,7 +217,7 @@ if (RobotMode !=0)
   Pitch.Kp = 120;
   Pitch.Ki = 0.04;
   Pitch.Kd = 0.5;
-  Pitch.AutoAimGain = 50;
+  Pitch.AutoAimGain = 1.5;
     
   Yaw.Sensitivity = 0.01;
   Yaw.Target = 0;
@@ -225,7 +225,7 @@ if (RobotMode !=0)
   Yaw.Kp = 120;
   Yaw.Ki = 0.04;
   Yaw.Kd = 0.5;
-  Yaw.AutoAimGain = 50;
+  Yaw.AutoAimGain = 1.7;
 ////////////////////////////////////////////////////////////////////////
 }
 
@@ -245,15 +245,6 @@ void loop() {
     CommunicationTime = millis();
     // if (RobotMode == 0)
     //   Send_data_to_Slave(); //向主机发数据
-    startValuePack(TXbuffer);
-    putByte(X_Bias);
-    putByte(Y_Bias);
-    putFloat(Pitch.Target+Pitch.TargetBias);
-    putFloat(Yaw.Target+Yaw.TargetBias);
-    putFloat(setAsd);
-    putFloat(setBsd);
-    endValuePack();
-    BTsendBuffer(TXbuffer,endValuePack());
     // if (RobotMode == 2 || RobotMode == 1)
     // {
     //   readValuePack(&rxpack);//接收遥控器数据包
@@ -262,7 +253,20 @@ void loop() {
   }
   
   if (AutoAimSwitch == 1 || RobotMode == 1)
-    Read_serial1(); //从摄像头读数据
+    {
+      Read_serial1(); //从摄像头读数据
+      if (RobotMode == 1)
+      {
+        if (Detected == 1)
+          {
+            if (X_Bias>1||X_Bias<-1)
+              Yaw.Target += X_Bias*0.001*Yaw.AutoAimGain;
+            if (Y_Bias>1||Y_Bias<-1)
+              Pitch.Target += Y_Bias*0.001*Pitch.AutoAimGain;
+          }
+      }
+    }
+
   if (RobotMode == 0)
     Read_data_from_Slave(); //蓝牙从下板读命令数据
 
@@ -286,13 +290,6 @@ void loop() {
       {
           readValuePack(&rxpack);//接收遥控器数据包
           PIDTuning();//蓝牙调试PID参数 
-          if (Detected == 1)
-          {
-            if (X_Bias>3||X_Bias<-3)
-              Yaw.Target += X_Bias*0.001*Yaw.AutoAimGain;
-            if (Y_Bias>3||Y_Bias<-3)
-              Pitch.Target += Y_Bias*0.001*Pitch.AutoAimGain;
-          }
       }
 
       if (RobotMode == 2)
@@ -335,13 +332,15 @@ void loop() {
     
 
       // 打印编码器角度
-      Serial.print(Pitch.Now);
-      Serial.print(" ");
-      Serial.print(Yaw.Now);
-      Serial.print(" ");
-      Serial.print(Pitch.Target);
-      Serial.print(" ");
-      Serial.println(Yaw.Target);
+      // Serial.print(Pitch.Now);
+      // Serial.print(" ");
+      // Serial.print(Yaw.Now);
+      // Serial.print(" ");
+      // Serial.print(Pitch.Target);
+      // Serial.print(" ");
+      // Serial.print(Yaw.Target);
+      // Serial.print(" ");
+      // Serial.println(Detected);
 
       //打印PID控制效果
       // Serial.print(Pitch.Now);
@@ -415,6 +414,10 @@ void PIDTuning()//用蓝牙进行PID调试
   endValuePack();
   BTsendBuffer(TXbuffer,endValuePack());
 //打印蓝牙PID调试参数
+  // Serial.print(Pitch.AutoAimGain);
+  // Serial.print(" ");
+  // Serial.println(Yaw.AutoAimGain);
+
   // Serial.print(Pitch.Kp);
   // Serial.print(" ");
   // Serial.print(Pitch.Ki);
@@ -508,7 +511,7 @@ void Read_data_from_Slave() //读主板发来的数据
                 recstatuBluetooth = 0;
                 packerflagBluetooth = 0;//用于告知系统已经接收失败
                 ccntBluetooth = 0;       
-                Serial.println("Communication error!");                     
+                Serial.println("BT communication error!");                     
             }                        
           }  
       }
@@ -585,15 +588,15 @@ unsigned char crc2(unsigned char buffer[])
 
 boolean crc1Camera(int8_t buffer[])
 {
-  unsigned int crc_bit1=0;
-  unsigned int sum1=0;
+  int8_t crc_bit1=0;
+  int8_t sum1=0;
   
   for (int j = 2; j <= (RxIndex-2); j++)
   {
     sum1 += buffer[j];
   }
   crc_bit1 = sum1 & 0xff;
-  if ((unsigned char)crc_bit1 == buffer[RxIndex-1])
+  if ((int8_t)crc_bit1 == buffer[RxIndex-1])
     return true;
   else
     return false;
@@ -615,9 +618,10 @@ unsigned char crc2Camera(unsigned char buffer[])
 
 void Read_serial1() //读摄像头数据
 { 
-  Detected = 0; //清空识别到目标的标志位
+  // Detected = 0; //清空识别到目标的标志位
   if (Serial1.available() > 0) 
   {
+    //  Detected = 1; //成功识别到目标
      dat = Serial1.read();  
      //Serial.print(dat);  
      if((ccnt==0)&&(dat == 111))
@@ -641,18 +645,17 @@ void Read_serial1() //读摄像头数据
             {
                 recstatu = 0;
                 packerflag = 1;//用于告知系统已经接收成功
-                Detected = 1; //成功识别到目标
                 ccnt = 0;  
       
                 X_Bias = rxbuf[2];
                 Y_Bias = rxbuf[3];
-
+                Detected = rxbuf[4];
                 // Serial.println("Data from controller:");
-                // Serial.print(rxbuf[2]);
-                // Serial.print(" ");
-                // Serial.print(rxbuf[3]);
-                // Serial.print(" ");
-                // Serial.println(rxbuf[4]);     
+                Serial.print(rxbuf[2]);
+                Serial.print(" ");
+                Serial.print(rxbuf[3]);
+                Serial.print(" ");
+                Serial.println(rxbuf[4]);     
      
             }
             else
@@ -662,7 +665,7 @@ void Read_serial1() //读摄像头数据
                 recstatu = 0;
                 packerflag = 0;//用于告知系统已经接收失败
                 ccnt = 0;       
-                Serial.println("Communication error!");                     
+                Serial.println("Camera communication error!");                     
             }                        
           }  
       }
